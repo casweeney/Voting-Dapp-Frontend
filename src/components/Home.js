@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Contract, providers } from 'ethers';
 import Web3Modal from 'web3modal';
 import {
@@ -21,9 +21,124 @@ const Home = () => {
     const [walletConnected, setWalletConnected] = useState(false);
     const [enteredTitle, setEnteredTitle] = useState('');
     const [enteredOptions, setEnteredOptions] = useState('');
+    const [account, setAccount] = useState('');
+    const [provider, setProvider] = useState(null)
     const web3ModalRef = useRef();
 
-    const connectWallet = async () => {
+
+    // Helper function to fetch a Provider instance from Metamask
+    const getProvider = useCallback(async () => {
+        const provider = await web3ModalRef.current.connect();
+        const web3Provider = new providers.Web3Provider(provider);
+        const getSigner = web3Provider.getSigner();
+
+        const { chainId } = await web3Provider.getNetwork();
+
+        setAccount(await getSigner.getAddress());
+        setWalletConnected(true)
+
+
+        if (chainId !== CHAIN_ID) {
+        window.alert(`Please switch to the ${NETWORK_NAME} network!`);
+            throw new Error(`Please switch to the ${NETWORK_NAME} network`);
+        }
+        setProvider(web3Provider);
+    }, []);
+
+    // Helper function to fetch a Signer instance from Metamask
+    const getSigner = useCallback(async () => {
+        const web3Modal = await web3ModalRef.current.connect();
+        const web3Provider = new providers.Web3Provider(web3Modal);
+
+        const { chainId } = await web3Provider.getNetwork();
+
+
+        if (chainId !== CHAIN_ID) {
+        window.alert(`Please switch to the ${NETWORK_NAME} network!`);
+            throw new Error(`Please switch to the ${NETWORK_NAME} network`);
+        }
+        
+        const signer = web3Provider.getSigner();
+        return signer;
+            
+        
+    }, []);
+
+    // Helper function to return a VotingFactory Contract instance
+    // given a Provider/Signer
+    const getVotingFactoryInstance = useCallback((providerOrSigner) => {
+        return new Contract(
+            VOTING_FACTORY_CONTRACT_ADDRESS,
+            VOTING_FACTORY_ABI,
+            providerOrSigner
+        );
+    },[]);
+
+    // Helper function to return a VotingPoll Contract instance // receiving the contract address as argument
+    // given a Provider/Signer
+    const getVotingPollInstance = useCallback((providerOrSigner, votingPollContractAddress) => {
+        return new Contract(
+            votingPollContractAddress,
+            VOTING_POLL_ABI,
+            providerOrSigner
+        )
+    },[])
+
+    const getNumVotingPolls = useCallback(async () => {
+        try {
+            const contract = getVotingFactoryInstance(provider);
+            const totalNumVotingPolls = await contract.allVotingPolls();
+            setNumVotingPolls(totalNumVotingPolls.toString());
+        } catch (error) {
+            console.error(error);
+        }
+    },[getVotingFactoryInstance, provider])
+
+    const hasVoted = useCallback(async (pollAddress) => {
+        try {
+            const votingPollContract = getVotingPollInstance(provider, pollAddress);
+            const userVoted = await votingPollContract.hasVote(account);
+            return userVoted;
+        } catch (error) {
+            console.error(error);
+        }
+    },[account, provider, getVotingPollInstance])
+
+
+    const getAllVotingPolls = useCallback(async () => {
+        try {
+            const factroryContract = getVotingFactoryInstance(provider);
+            const allPolls = await factroryContract.getAllVotingPolls();
+
+            const polls = [];
+
+            if(allPolls.length > 0){
+                allPolls.map(async (poll) => {
+                    const votingPollContract = getVotingPollInstance(provider,poll);
+                    const title = await votingPollContract.title();
+                    const options = await votingPollContract.fetchCandidates();
+
+                    const userVoted = await hasVoted(poll);
+
+                    const pollDetails = {
+                        address: poll,
+                        title: title,
+                        options: options,
+                        voted: userVoted
+                    };
+
+                    polls.push(pollDetails)
+                });
+            }
+
+            setVotingPolls(polls);
+
+        } catch (error) {
+            console.error(error);
+        }
+    }, [getVotingFactoryInstance, getVotingPollInstance, hasVoted, provider]);
+
+    const connectWallet = useCallback(async () => {
         try {
             web3ModalRef.current = new Web3Modal({
                 network: NETWORK_NAME,
@@ -31,55 +146,25 @@ const Home = () => {
                 disableInjectedProvider: false,
             });
 
-            await getProviderOrSigner();
-            setWalletConnected(true);
-            getNumVotingPolls();
-            getAllVotingPolls();
+            await getProvider();
         } catch (error) {
-            console.log(error);
+            console.error(error);
         }
-    }
+    },[getProvider])
 
-    const getAllVotingPolls = async () => {
-        try {
-          const provider = await getProviderOrSigner();
-          const factroryContract = getVotingFactoryInstance(provider);
-          const allPolls = await factroryContract.getAllVotingPolls();
+    useEffect(() => {
 
-          const polls = [];
-
-          if(allPolls.length > 0){
-              allPolls.map(async (poll) => {
-                const votingPollContract = getVotingPollInstance(provider,poll);
-                const title = await votingPollContract.title();
-                const options = await votingPollContract.fetchCandidates();
-
-                const pollDetails = {
-                    address: poll,
-                    title: title,
-                    options: options
-                };
-
-                polls.push(pollDetails)
-              });
-          }
-
-          setVotingPolls(polls);
-        } catch (error) {
-          console.error(error);
+        const fetchPolls = async () => {
+            if(account && provider){
+                await getNumVotingPolls();
+                await getAllVotingPolls();
+            }
         }
-      };
 
-    const getNumVotingPolls = async () => {
-        try {
-            const provider = await getProviderOrSigner();
-            const contract = getVotingFactoryInstance(provider);
-            const totalNumVotingPolls = await contract.allVotingPolls();
-            setNumVotingPolls(totalNumVotingPolls.toString());
-        } catch (error) {
-            console.log(error);
-        }
-    }
+        fetchPolls()
+    
+    }, [account, provider, getNumVotingPolls, getAllVotingPolls])
+
 
     const createPoll = async (e) => {
         e.preventDefault();
@@ -89,12 +174,13 @@ const Home = () => {
         } else {
             try {
                 const optionsArray = enteredOptions.split(',');
-                const signer = await getProviderOrSigner(true);
+                const signer = await getSigner();
                 const factoryContract = getVotingFactoryInstance(signer);
                 const txn = await factoryContract.createPoll(enteredTitle, optionsArray);
                 setLoading(true);
                 await txn.wait();
                 await getNumVotingPolls();
+                await getAllVotingPolls();
                 setLoading(false);
                 setEnteredTitle('');
                 setEnteredOptions('');
@@ -105,62 +191,6 @@ const Home = () => {
         }
     }
 
-
-    // Helper function to fetch a Provider/Signer instance from Metamask
-    const getProviderOrSigner = async (needSigner = false) => {
-        const provider = await web3ModalRef.current.connect();
-        const web3Provider = new providers.Web3Provider(provider);
-
-        const { chainId } = await web3Provider.getNetwork();
-        if (chainId !== CHAIN_ID) {
-        window.alert(`Please switch to the ${NETWORK_NAME} network!`);
-            throw new Error(`Please switch to the ${NETWORK_NAME} network`);
-        }
-
-        if (needSigner) {
-            const signer = web3Provider.getSigner();
-            return signer;
-        }
-        return web3Provider;
-    };
-
-    // Helper function to return a VotingFactory Contract instance
-    // given a Provider/Signer
-    const getVotingFactoryInstance = (providerOrSigner) => {
-        return new Contract(
-            VOTING_FACTORY_CONTRACT_ADDRESS,
-            VOTING_FACTORY_ABI,
-            providerOrSigner
-        );
-    };
-
-    const getVotingPollInstance = (providerOrSigner, votingPollContractAddress) => {
-        return new Contract(
-            votingPollContractAddress,
-            VOTING_POLL_ABI,
-            providerOrSigner
-        )
-    }
-
-    // useEffect(() => {
-    //     if(!walletConnected) {
-    //         web3ModalRef.current = new Web3Modal({
-    //             network: NETWORK_NAME,
-    //             providerOptions: {},
-    //             disableInjectedProvider: false,
-    //         });
-
-    //         connectWallet().then(() => {
-    //             getNumVotingPolls();
-    //         });
-    //     }
-    // }, [walletConnected]);
-
-    useEffect(() => {
-        if(!walletConnected) {
-            connectWallet();
-        }
-    })
 
     const titleChangeHandler = (e) => {
         setEnteredTitle(e.target.value);
@@ -181,12 +211,13 @@ const Home = () => {
             alert('Select a voting option');
         } else {
             try {
-                const signer = await getProviderOrSigner(true);
+                const signer = await getSigner();
                 const VotingPollContract = getVotingPollInstance(signer, pollContractAddress);
                 const txn = await VotingPollContract.vote(+selectedOption);
                 setVoteLoading(true);
                 await txn.wait();
-
+                await getAllVotingPolls();
+                setSelectedOption('');
                 setVoteLoading(false);
             } catch (error) {
                 console.error(error);
@@ -194,14 +225,12 @@ const Home = () => {
         }
     }
 
-    const renderTabs = () => {
-        if (selectedTab === "Create Poll") {
-          return renderCreatePollTab();
-        } else if (selectedTab === "View Polls") {
-          return renderViewPollsTab();
+
+    useEffect(() => {
+        if(!walletConnected) {
+            connectWallet();
         }
-        return null;
-    }
+    }, [walletConnected, connectWallet]);
 
     const renderCreatePollTab = () => {
         if(loading) {
@@ -241,12 +270,13 @@ const Home = () => {
                             <form>
                                 {poll.options.length > 0 && poll.options.map((option, index) => (
                                     <p key={poll.address.concat(index)} className="font-weight-bold text-primary" style={{fontSize: '20px'}}>
-                                    {option.name} {" "} <input value={index} type="radio" name="pollOption" onChange={optionChangeHandler} /> {" "}
+                                    {option.name} {" "} <input value={index} disabled={poll.voted ? "disabled" : ""} type="radio" name="pollOption" onChange={optionChangeHandler} /> {" "}
+                                    <span className="ml-5" style={{fontSize: '16px', color: '#000', display: 'inline-block'}}>{poll.voted ? `${option.voteCount.toNumber()} votes` : ""}</span>
                                     </p>
                                 ))}
 
                                 {!voteLoading ? 
-                                    <button onClick={(e) => voteClickHandler(e, poll.address)} className="btn btn-primary btn-block">Vote</button> 
+                                    <button onClick={(e) => voteClickHandler(e, poll.address)} disabled={poll.voted ? "disabled" : ""} className="btn btn-primary btn-block">{poll.voted ? "Already Voted" : "Vote"}</button> 
                                     : 
                                     <div className="mt-4">
                                         Loading... Waiting for transaction...
@@ -259,6 +289,15 @@ const Home = () => {
             </div>
         ); 
     }
+
+    const renderTabs = () => {
+        if (selectedTab === "Create Poll") {
+          return renderCreatePollTab();
+        } else if (selectedTab === "View Polls") {
+          return renderViewPollsTab();
+        }
+        return null;
+    };
     
     return (
         <div className="row" style={{ alignItems: 'center' }}>
