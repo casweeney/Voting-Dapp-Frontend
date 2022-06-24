@@ -301,13 +301,13 @@ const Home = () => {
     
     return (
         <div className="row" style={{ alignItems: 'center' }}>
-            <div className="col-md-6 mt-4">
+            <div className="col-md-6 mb-4">
                 <h1>GoVote dApp</h1>
                 <h4>A simple voting decentralized app</h4>
                 <p>Want to vote? Click on view polls and vote accordingly or create a poll for others to vote.</p>
                 {!walletConnected ? 
-                    <button className="btn btn-danger btn-lg" onClick={connectWallet}>Connect Wallet</button> : 
-                    <div>
+                    <button className="btn btn-danger btn-lg mb-4" onClick={connectWallet}>Connect Wallet</button> : 
+                    <div className="mb-4">
                         <p>Total Voting Polls: {numVotingPolls}</p>
                         <div className="">
                             <button className="btn btn-info" onClick={() => setSelectedTab("Create Poll")}>Create Polls</button> {" "}
